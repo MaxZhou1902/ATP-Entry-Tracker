@@ -1,0 +1,40 @@
+name: Fetch ATP Data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch latest entries (with retry)
+        run: |
+          node scripts/fetch-atp.js || (sleep 15 && node scripts/fetch-atp.js) || echo "Fetch failed, keeping existing data file."
+        env:
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+
+      - name: Commit data changes
+        run: |
+          if git diff --quiet -- data/entries.json; then
+            echo "No data changes"
+            exit 0
+          fi
+          git add data/entries.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(data): update ATP entries"
+          git push

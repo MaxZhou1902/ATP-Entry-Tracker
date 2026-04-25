@@ -1,0 +1,9 @@
+{
+  "name": "atp-entry-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "fetch:data": "node scripts/fetch-atp.js"
+  }
+}
