@@ -156,32 +156,58 @@ function parseHtmlTable(text) {
 
     const headers = rowMatches.map((row) => readCells(row));
     const headerIndex = headers.findIndex((header) => {
+      const dateCount = header.filter((h) => parseDateHeader(h)).length;
       const lower = header.map((h) => h.toLowerCase());
-      return lower.includes("#") && lower.includes("player") && lower.includes("age") && lower.includes("ctry");
+      return dateCount >= 2 && (lower.includes("player") || lower.includes("ctry") || lower.includes("#"));
     });
     if (headerIndex < 0) continue;
 
     const header = headers[headerIndex];
-    const hashIndex = header.findIndex((h) => h === "#");
-    const playerIndex = header.findIndex((h) => h.toLowerCase() === "player");
-    const ageIndex = header.findIndex((h) => h.toLowerCase() === "age");
-    const ctryIndex = header.findIndex((h) => h.toLowerCase() === "ctry");
-    if ([hashIndex, playerIndex, ageIndex, ctryIndex].some((v) => v < 0)) continue;
-
-    const dateHeaders = header.slice(ctryIndex + 1);
+    const dateStartIndex = header.findIndex((h) => Boolean(parseDateHeader(h)));
+    if (dateStartIndex < 0) continue;
+    const dateHeaders = header.slice(dateStartIndex);
     const rows = [];
+
+    const extractPlayerRow = (cells) => {
+      if (!cells.length) return null;
+
+      const rankIndex = cells.findIndex((v) => /^\d+$/.test(v));
+      if (rankIndex < 0) return null;
+
+      const prefixEnd = Math.min(dateStartIndex, cells.length);
+      const core = cells.slice(rankIndex + 1, prefixEnd);
+      if (core.length < 2) return null;
+
+      const countryRelIndex = core.findIndex((v) => /^[A-Z]{3}$/.test(v));
+      if (countryRelIndex < 0) return null;
+      const country3 = core[countryRelIndex];
+
+      const beforeCountry = core.slice(0, countryRelIndex);
+      const ageRelIndex = beforeCountry.findIndex((v) => /^\d{1,2}$/.test(v));
+      const age = ageRelIndex >= 0 ? Number(beforeCountry[ageRelIndex]) : null;
+
+      const nameParts = beforeCountry
+        .filter((v, idx) => idx !== ageRelIndex)
+        .filter((v) => v && !/^\d+$/.test(v));
+      const name = nameParts.join(" ").trim();
+      if (!name) return null;
+
+      const rawScheduleCells = cells.slice(dateStartIndex).map((v) => v || "");
+
+      return {
+        rank: Number(cells[rankIndex]),
+        name,
+        age,
+        country3,
+        rawScheduleCells,
+      };
+    };
+
     for (const row of rowMatches.slice(headerIndex + 1)) {
       const cells = readCells(row);
-      if (cells.length <= ctryIndex) continue;
-      if (!/^\d+$/.test(cells[hashIndex] || "")) continue;
-
-      rows.push({
-        rank: Number(cells[hashIndex]),
-        name: cells[playerIndex] || "",
-        age: Number(cells[ageIndex]) || null,
-        country3: cells[ctryIndex] || "",
-        rawScheduleCells: cells.slice(ctryIndex + 1).map((v) => v || ""),
-      });
+      const parsedRow = extractPlayerRow(cells);
+      if (!parsedRow) continue;
+      rows.push(parsedRow);
     }
 
     if (rows.length > 0 && dateHeaders.length > 0) {
