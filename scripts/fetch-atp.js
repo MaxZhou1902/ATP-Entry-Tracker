@@ -275,7 +275,8 @@ async function loadSourceText() {
   const sourceFilePath = process.env.SOURCE_TEXT_FILE;
   if (sourceFilePath) {
     const fs = await import("node:fs/promises");
-    return fs.readFile(sourceFilePath, "utf-8");
+    const text = await fs.readFile(sourceFilePath, "utf-8");
+    return [{ label: "source-file", text }];
   }
 
   const scrapingBeeUrl = buildScrapingBeeUrl();
@@ -285,13 +286,15 @@ async function loadSourceText() {
     ...FALLBACK_URLS.map((url, idx) => ({ label: `fallback-${idx + 1}`, url })),
   ];
   const failures = [];
+  const payloads = [];
 
   for (const candidate of candidates) {
     try {
       const text = await fetchWithTimeout(candidate.url, 30000);
       if (text && text.trim()) {
         console.log(`Fetched source from ${candidate.label}`);
-        return text;
+        payloads.push({ label: candidate.label, text });
+        continue;
       }
       failures.push(`${candidate.label}: empty response`);
     } catch (error) {
@@ -299,18 +302,41 @@ async function loadSourceText() {
     }
   }
 
+  if (payloads.length > 0) {
+    return payloads;
+  }
+
   throw new Error(`All source fetch attempts failed. ${failures.join(" | ")}`);
 }
 
 async function main() {
-  const rawText = await loadSourceText();
-  const text = unwrapJsonBody(rawText);
+  const sourcePayloads = await loadSourceText();
 
-  const parsed = parseMarkdownTable(text) || parseHtmlTable(text);
+  let parsed = null;
+  let selectedSource = "unknown";
+  let lastPreview = "";
+  for (const payload of sourcePayloads) {
+    const text = unwrapJsonBody(payload.text);
+    const result = parseMarkdownTable(text) || parseHtmlTable(text);
+    if (result) {
+      parsed = result;
+      selectedSource = payload.label;
+      break;
+    }
+
+    const preview = text.slice(0, 400).replace(/\s+/g, " ");
+    lastPreview = `${payload.label}: ${preview}`;
+    console.error(`Parse miss from ${payload.label}. Preview: ${preview}`);
+  }
+
   if (!parsed) {
-    console.error(`Fetch preview: ${text.slice(0, 400).replace(/\s+/g, " ")}`);
+    if (lastPreview) {
+      console.error(`Fetch preview: ${lastPreview}`);
+    }
     throw new Error("Could not locate ATP schedule table in fetched content.");
   }
+
+  console.log(`Parsed ATP schedule table from ${selectedSource}`);
 
   const { dateHeaders, rows: parsedRows } = parsed;
   const mondays = mondayDates(4);
