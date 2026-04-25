@@ -107,7 +107,32 @@ function decodeHtmlEntities(s) {
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function unwrapJsonBody(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.body === "string") return parsed.body;
+      if (typeof parsed.html === "string") return parsed.html;
+      if (typeof parsed.content === "string") return parsed.content;
+      if (parsed.data && typeof parsed.data === "object") {
+        if (typeof parsed.data.body === "string") return parsed.data.body;
+        if (typeof parsed.data.html === "string") return parsed.data.html;
+        if (typeof parsed.data.content === "string") return parsed.data.content;
+      }
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
 }
 
 function parseHtmlTable(text) {
@@ -129,7 +154,14 @@ function parseHtmlTable(text) {
       return cells;
     };
 
-    const header = readCells(rowMatches[0]);
+    const headers = rowMatches.map((row) => readCells(row));
+    const headerIndex = headers.findIndex((header) => {
+      const lower = header.map((h) => h.toLowerCase());
+      return lower.includes("#") && lower.includes("player") && lower.includes("age") && lower.includes("ctry");
+    });
+    if (headerIndex < 0) continue;
+
+    const header = headers[headerIndex];
     const hashIndex = header.findIndex((h) => h === "#");
     const playerIndex = header.findIndex((h) => h.toLowerCase() === "player");
     const ageIndex = header.findIndex((h) => h.toLowerCase() === "age");
@@ -138,7 +170,7 @@ function parseHtmlTable(text) {
 
     const dateHeaders = header.slice(ctryIndex + 1);
     const rows = [];
-    for (const row of rowMatches.slice(1)) {
+    for (const row of rowMatches.slice(headerIndex + 1)) {
       const cells = readCells(row);
       if (cells.length <= ctryIndex) continue;
       if (!/^\d+$/.test(cells[hashIndex] || "")) continue;
@@ -271,10 +303,12 @@ async function loadSourceText() {
 }
 
 async function main() {
-  const text = await loadSourceText();
+  const rawText = await loadSourceText();
+  const text = unwrapJsonBody(rawText);
 
   const parsed = parseMarkdownTable(text) || parseHtmlTable(text);
   if (!parsed) {
+    console.error(`Fetch preview: ${text.slice(0, 400).replace(/\s+/g, " ")}`);
     throw new Error("Could not locate ATP schedule table in fetched content.");
   }
 
